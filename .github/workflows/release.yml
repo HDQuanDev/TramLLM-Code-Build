@@ -218,7 +218,12 @@ jobs:
             name="${file##*/}"
             if jq -e --arg name "$name" '.assets | any(.name == $name)' release.json >/dev/null; then
               gh release download "$RELEASE_TAG" --repo "$TARGET_REPO" --pattern "$name" --output existing-asset
-              cmp "$file" existing-asset
+              if cmp -s "$file" existing-asset; then
+                echo "release: $name unchanged, skipping upload"
+              else
+                echo "release: $name differs, re-uploading"
+                gh release upload "$RELEASE_TAG" "$file" --repo "$TARGET_REPO" --clobber
+              fi
               rm existing-asset
             else
               gh release upload "$RELEASE_TAG" "$file" --repo "$TARGET_REPO"

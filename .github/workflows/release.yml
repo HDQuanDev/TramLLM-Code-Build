@@ -27,6 +27,9 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       ref: refs/tags/${{ inputs.tag || github.ref_name }}
+    # Workflow tái sử dụng không tự thấy secret của workflow gọi nó — phải
+    # truyền qua thì checkout trong ci.yml mới có PRIVATE_REPO_TOKEN.
+    secrets: inherit
 
   build:
     needs: verify

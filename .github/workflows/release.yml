@@ -1,9 +1,10 @@
 name: release
 
-# Build Linux và Windows cho TramLLM-Code từ repo riêng tư HDQuanDev/TramLLM-Code,
-# rồi đưa bản cài đặt vào draft release NGAY TẠI repo công khai này — app là
-# công khai, chỉ source code ở repo riêng tư. Máy bảo trì thêm bản macOS đã
-# ký vào cùng draft đó và công bố stable như trước — không đổi.
+# Build Linux, Windows và macOS cho TramLLM-Code từ repo riêng tư
+# HDQuanDev/TramLLM-Code, rồi đưa bản cài đặt vào draft release NGAY TẠI repo
+# công khai này — app là công khai, chỉ source code ở repo riêng tư. Job macOS
+# chạy trên runner tự quản ở máy Mac (ký ad-hoc, không notarize). Máy bảo trì
+# thêm chữ ký updater rồi công bố stable như trước — không đổi.
 #
 # Chạy bằng workflow_dispatch (tag vX.Y.Z), do workflow dispatch-release.yml ở
 # repo riêng tư gọi khi tag được push, hoặc chạy tay từ tab Actions.
@@ -146,9 +147,50 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  macos:
+    name: macOS (self-hosted)
+    needs: verify
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+      # clean: true để cây làm việc sạch như checkout mới — Makefile bắt buộc
+      # `git status` trống và HEAD đúng commit của tag.
+      - uses: actions/checkout@v4
+        with:
+          repository: HDQuanDev/TramLLM-Code
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          clean: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: ui deps
+        working-directory: ui
+        run: npm ci
+
+      # Chạy đúng lệnh anh vẫn chạy tay: test + build app/dmg ký ad-hoc
+      # (UNSIGNED_MACOS=1, không notarize) + collect vào dist/.
+      - name: Build macOS release
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        shell: bash
+        run: make release-macos TAG="$RELEASE_TAG" DIST=dist UNSIGNED_MACOS=1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tramllm-code-macos
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
   draft:
     name: Stage GitHub draft
-    needs: build
+    needs: [build, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

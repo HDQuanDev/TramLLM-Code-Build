@@ -12,13 +12,14 @@ repo's Pro minutes. No source code lives in this repo — workflows only.
    `release.yml` with the tag (one 1-minute job).
 3. `release.yml` verifies the tag (same `ci.yml` as the private repo),
    builds Linux (AppImage/deb/rpm) and Windows (NSIS) installers, and
-   uploads them to the draft release in the private repo.
-4. The maintainer machine adds the signed macOS packages and promotes
-   stable, as before.
+   uploads them to the draft release in this public repo — the app is
+   public, only its source code stays private.
+4. The maintainer machine adds the signed macOS packages to the same
+   draft release and promotes stable, as before.
 
 ## Secrets
 
 `PRIVATE_REPO_TOKEN` — a fine-grained personal access token scoped to
 `HDQuanDev/TramLLM-Code` (Contents: read and write) and to this repo
 (Actions: read and write). It is used to check out the private repo and
-to create/upload the draft release. Rotate it before it expires.
+to create/upload the draft release in this repo. Rotate it before it expires.

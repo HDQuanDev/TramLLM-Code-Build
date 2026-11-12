@@ -1,8 +1,8 @@
 name: ci
 
-# Bản sao CI của repo riêng tư HDQuanDev/TramLLM-Code, chạy trên runner miễn phí
-# của repo công khai này. Mọi bước checkout đều lấy code từ repo riêng tư bằng
-# token PAT (secret PRIVATE_REPO_TOKEN) — repo này KHÔNG chứa code nguồn.
+# Bản sao CI của repo riêng tư HDQuanDev/TramLLM-Code, chạy tại repo công khai
+# này. Mọi bước checkout đều lấy code từ repo riêng tư bằng token PAT
+# (secret PRIVATE_REPO_TOKEN) — repo này KHÔNG chứa code nguồn.
 #
 # Không chạy trên `push: main` (giống repo gốc: mọi thay đổi vào main đều qua PR),
 # và KHÔNG có trigger `pull_request`: PR vào repo công khai này sẽ checkout một

@@ -231,9 +231,15 @@ jobs:
           done
 
   publish:
-    name: Publish stable
+    name: Publish release
     needs: [draft]
-    uses: ./.github/workflows/publish.yml
-    with:
-      tag: ${{ inputs.tag || github.ref_name }}
-    secrets: inherit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      TARGET_REPO: HDQuanDev/TramLLM-Code-Build
+    steps:
+      - name: Publish the draft release
+        run: gh release edit "$RELEASE_TAG" --repo "$TARGET_REPO" --draft=false --latest

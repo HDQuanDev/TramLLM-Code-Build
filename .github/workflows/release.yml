@@ -210,7 +210,7 @@ jobs:
           set -euo pipefail
           if ! gh release view "$RELEASE_TAG" --repo "$TARGET_REPO" --json isDraft,assets > release.json; then
             gh release create "$RELEASE_TAG" --repo "$TARGET_REPO" \
-              --draft --title "TramLLM Code $RELEASE_TAG" --generate-notes
+              --draft --target main --title "TramLLM Code $RELEASE_TAG" --generate-notes
             gh release view "$RELEASE_TAG" --repo "$TARGET_REPO" --json isDraft,assets > release.json
           fi
           jq -e '.isDraft' release.json >/dev/null

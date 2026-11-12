@@ -1,0 +1,180 @@
+name: release
+
+# Build Linux và Windows cho TramLLM-Code từ repo riêng tư HDQuanDev/TramLLM-Code,
+# rồi đưa bản cài đặt vào draft release của repo đó. Máy bảo trì thêm bản macOS đã
+# ký và công bố stable như trước — không đổi.
+#
+# Chạy bằng workflow_dispatch (tag vX.Y.Z), do workflow dispatch-release.yml ở
+# repo riêng tư gọi khi tag được push, hoặc chạy tay từ tab Actions.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable version tag (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify tagged source
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: refs/tags/${{ inputs.tag || github.ref_name }}
+
+  build:
+    needs: verify
+    name: ${{ matrix.artifact }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+            bundles: appimage,deb,rpm
+            artifact: linux
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+            bundles: nsis
+            artifact: windows
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: HDQuanDev/TramLLM-Code
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: node scripts/desktop-release.mjs check-tag "$RELEASE_TAG"
+        shell: bash
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            src-tauri
+          key: ${{ matrix.triple }}
+
+      - name: Cache Linux Tauri .debs
+        if: matrix.os == 'ubuntu-22.04'
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-cache
+          key: apt-debs-${{ matrix.os }}-webkit2gtk41-v1
+
+      - name: Linux webkit deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          # Cùng cơ chế cache với `ci.yml`: tránh tải lại vài trăm MB mỗi lần build.
+          # `rpm` chỉ cần cho bước đóng gói RPM (Fedora/RHEL); giữ trong cùng cache.
+          mkdir -p "$HOME/apt-cache"
+          sudo apt-get update
+          sudo apt-get install -y --download-only \
+            -o Dir::Cache::archives="$HOME/apt-cache" \
+            libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev rpm
+          sudo apt-get install -y -o Dir::Cache::archives="$HOME/apt-cache" \
+            libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev rpm
+
+      - name: ui deps
+        working-directory: ui
+        run: npm ci
+
+      # `externalBin` của Tauri cần `binaries/tram-core-<triple>[.exe]`.
+      - name: sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --target ${{ matrix.triple }} -p tram-core --manifest-path core/Cargo.toml
+          mkdir -p src-tauri/binaries
+          ext=""
+          case "${{ matrix.os }}" in windows-*) ext=".exe" ;; esac
+          cp "core/target/${{ matrix.triple }}/release/tram-core${ext}" \
+             "src-tauri/binaries/tram-core-${{ matrix.triple }}${ext}"
+          ls -l src-tauri/binaries
+
+      # `--bundles` ghi đè `bundle.targets` trong tauri.conf.json (file đó chỉ khai
+      # app/dmg của macOS). Chạy từ gốc repo giống Makefile để `beforeBuildCommand`
+      # (`npm --prefix ../ui`) vẫn đúng thư mục.
+      - name: Tauri build
+        shell: bash
+        run: |
+          ./ui/node_modules/.bin/tauri build \
+            --target ${{ matrix.triple }} \
+            --bundles ${{ matrix.bundles }} -- --locked
+
+      - name: Collect tagged artifacts
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          node scripts/desktop-release.mjs collect "${{ matrix.artifact }}" \
+            "src-tauri/target/${{ matrix.triple }}/release/bundle" dist "$RELEASE_TAG"
+
+      # Artifact nằm ở repo công khai này nên giữ ngắn ngày: job draft tải về ngay
+      # sau đó; bản cài đặt cuối cùng chỉ nằm ở draft release của repo riêng tư.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tramllm-code-${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  draft:
+    name: Stage GitHub draft
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      TARGET_REPO: HDQuanDev/TramLLM-Code
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create draft and upload missing artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" --repo "$TARGET_REPO" --json isDraft,assets > release.json; then
+            gh release create "$RELEASE_TAG" --repo "$TARGET_REPO" \
+              --draft --verify-tag --title "TramLLM Code $RELEASE_TAG" --generate-notes
+            gh release view "$RELEASE_TAG" --repo "$TARGET_REPO" --json isDraft,assets > release.json
+          fi
+          jq -e '.isDraft' release.json >/dev/null
+          for file in dist/*; do
+            name="${file##*/}"
+            if jq -e --arg name "$name" '.assets | any(.name == $name)' release.json >/dev/null; then
+              gh release download "$RELEASE_TAG" --repo "$TARGET_REPO" --pattern "$name" --output existing-asset
+              cmp "$file" existing-asset
+              rm existing-asset
+            else
+              gh release upload "$RELEASE_TAG" "$file" --repo "$TARGET_REPO"
+            fi
+          done

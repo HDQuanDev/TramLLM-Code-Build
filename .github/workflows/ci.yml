@@ -1,0 +1,119 @@
+name: ci
+
+# Bản sao CI của repo riêng tư HDQuanDev/TramLLM-Code, chạy trên runner miễn phí
+# của repo công khai này. Mọi bước checkout đều lấy code từ repo riêng tư bằng
+# token PAT (secret PRIVATE_REPO_TOKEN) — repo này KHÔNG chứa code nguồn.
+#
+# Không chạy trên `push: main` (giống repo gốc: mọi thay đổi vào main đều qua PR),
+# và KHÔNG có trigger `pull_request`: PR vào repo công khai này sẽ checkout một
+# ref không tồn tại ở repo riêng tư. PR vẫn chạy CI ở repo riêng tư như cũ.
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to verify before packaging a release
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Core and Tauri tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+            suffix: ""
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+            suffix: ".exe"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: HDQuanDev/TramLLM-Code
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            src-tauri
+
+      - name: Cache Linux Tauri .debs
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-cache
+          key: apt-debs-${{ runner.os }}-webkit2gtk41-v1
+
+      - name: Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          # webkit2gtk kéo theo rất nhiều gói (~13 phút lần đầu). Tải .deb vào thư mục
+          # của runner rồi cache lại; lần sau chỉ cài từ cache, không tải lại.
+          mkdir -p "$HOME/apt-cache"
+          sudo apt-get update
+          sudo apt-get install -y --download-only \
+            -o Dir::Cache::archives="$HOME/apt-cache" \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libgtk-3-dev
+          sudo apt-get install -y -o Dir::Cache::archives="$HOME/apt-cache" \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libgtk-3-dev
+
+      - name: Test Rust core
+        working-directory: core
+        run: cargo test --locked --workspace
+
+      - name: Stage debug sidecar and test Tauri shell
+        shell: bash
+        env:
+          TARGET_TRIPLE: ${{ matrix.triple }}
+          EXE_SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -euo pipefail
+          cargo build --locked --manifest-path core/Cargo.toml -p tram-core
+          mkdir -p src-tauri/binaries
+          cp "core/target/debug/tram-core${EXE_SUFFIX}" "src-tauri/binaries/tram-core-${TARGET_TRIPLE}${EXE_SUFFIX}"
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+  frontend:
+    name: Desktop UI and release tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: HDQuanDev/TramLLM-Code
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - run: npm ci
+        working-directory: ui
+
+      - name: UI tests
+        working-directory: ui
+        run: npm test
+
+      - name: Typecheck and build UI
+        working-directory: ui
+        run: npm run build
+
+      - name: Check release manifest contract
+        run: node --test scripts/tests/desktop-release.test.mjs

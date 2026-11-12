@@ -229,3 +229,11 @@ jobs:
               gh release upload "$RELEASE_TAG" "$file" --repo "$TARGET_REPO"
             fi
           done
+
+  publish:
+    name: Publish stable
+    needs: [draft]
+    uses: ./.github/workflows/publish.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+    secrets: inherit

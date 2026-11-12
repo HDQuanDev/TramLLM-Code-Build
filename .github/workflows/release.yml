@@ -1,8 +1,9 @@
 name: release
 
 # Build Linux và Windows cho TramLLM-Code từ repo riêng tư HDQuanDev/TramLLM-Code,
-# rồi đưa bản cài đặt vào draft release của repo đó. Máy bảo trì thêm bản macOS đã
-# ký và công bố stable như trước — không đổi.
+# rồi đưa bản cài đặt vào draft release NGAY TẠI repo công khai này — app là
+# công khai, chỉ source code ở repo riêng tư. Máy bảo trì thêm bản macOS đã
+# ký vào cùng draft đó và công bố stable như trước — không đổi.
 #
 # Chạy bằng workflow_dispatch (tag vX.Y.Z), do workflow dispatch-release.yml ở
 # repo riêng tư gọi khi tag được push, hoặc chạy tay từ tab Actions.
@@ -154,7 +155,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      TARGET_REPO: HDQuanDev/TramLLM-Code
+      TARGET_REPO: HDQuanDev/TramLLM-Code-Build
     steps:
       - uses: actions/download-artifact@v4
         with:

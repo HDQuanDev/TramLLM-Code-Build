@@ -16,12 +16,20 @@ public. No source code lives in this repo — workflows only.
    uploads them to the draft release in this public repo — the app is
    public, only its source code stays private.
 4. The macOS build runs on a self-hosted runner on the maintainer's Mac
-   and uploads to the same draft. The maintainer then adds the updater
-   signatures and promotes the release to stable, as before.
+   and uploads to the same draft (`draft` job attaches release notes from
+   `ui/CHANGELOG.md`).
+5. The `publish` job runs on the self-hosted Mac runner via
+   `node scripts/desktop-release.mjs sync <tag>`: verifies checksums and macOS
+   signatures, signs updater artifacts with `~/.tauri/tramllm-code.key`, uploads
+   `latest.json`, and promotes the release to `latest`.
 
 ## Secrets
 
-`PRIVATE_REPO_TOKEN` — a fine-grained personal access token scoped to
-`HDQuanDev/TramLLM-Code` (Contents: read and write) and to this repo
-(Actions: read and write). It is used to check out the private repo and
-to create/upload the draft release in this repo. Rotate it before it expires.
+- `PRIVATE_REPO_TOKEN` — a fine-grained personal access token scoped to
+  `HDQuanDev/TramLLM-Code` (Contents: read and write) and to this repo
+  (Actions: read and write, Contents: write). It is used to check out the
+  private repo and to create/upload/publish the release in this repo. Rotate it
+  before it expires.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` *(optional, if `~/.tauri/tramllm-code.key`
+  has a passphrase)* — password used by the self-hosted Mac `publish` job to
+  unlock the updater signing key when generating `latest.json`.

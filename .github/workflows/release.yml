@@ -1,10 +1,10 @@
 name: release
 
 # Build Linux, Windows và macOS cho TramLLM-Code từ repo riêng tư
-# HDQuanDev/TramLLM-Code, rồi đưa bản cài đặt vào draft release NGAY TẠI repo
-# công khai này — app là công khai, chỉ source code ở repo riêng tư. Job macOS
-# chạy trên runner tự quản ở máy Mac (ký ad-hoc, không notarize). Máy bảo trì
-# thêm chữ ký updater rồi công bố stable như trước — không đổi.
+# HDQuanDev/TramLLM-Code, tạo draft release NGAY TẠI repo công khai này rồi chạy
+# job `publish` trên runner macOS tự quản để ký `latest.json` bằng khóa
+# `~/.tauri/tramllm-code.key`, đồng bộ release notes từ `ui/CHANGELOG.md` và
+# công bố `--latest`. Job macOS hiện ký ad-hoc (không notarize).
 #
 # Chạy bằng workflow_dispatch (tag vX.Y.Z), do workflow dispatch-release.yml ở
 # repo riêng tư gọi khi tag được push, hoặc chạy tay từ tab Actions.
@@ -221,9 +221,8 @@ jobs:
           path: dist
           merge-multiple: true
 
-      # Bản draft chỉ được công bố `--latest` sau khi máy bảo trì chạy
-      # `node scripts/desktop-release.mjs sync "$RELEASE_TAG"` để ký và đính
-      # kèm `latest.json` — tránh cửa sổ 404 cho Tauri updater.
+      # Giữ release ở trạng thái draft cho tới khi job `publish` ký và đính kèm
+      # `latest.json` — tránh cửa sổ 404 cho Tauri updater.
       - name: Create draft and upload missing artifacts
         shell: bash
         run: |
@@ -253,3 +252,40 @@ jobs:
               gh release upload "$RELEASE_TAG" "$file" --repo "$TARGET_REPO"
             fi
           done
+
+  publish:
+    name: Sign latest.json and publish release
+    needs: [draft]
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: HDQuanDev/TramLLM-Code
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          clean: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: ui deps
+        working-directory: ui
+        run: npm ci
+
+      - name: Sign updater manifest and publish release
+        shell: bash
+        env:
+          TRAM_ALLOW_UNSIGNED_MACOS: "1"
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
+          node scripts/desktop-release.mjs sync "$RELEASE_TAG"

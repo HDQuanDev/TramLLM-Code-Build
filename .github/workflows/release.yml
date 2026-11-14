@@ -199,19 +199,43 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       TARGET_REPO: HDQuanDev/TramLLM-Code-Build
     steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: HDQuanDev/TramLLM-Code
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          sparse-checkout: |
+            core/Cargo.toml
+            src-tauri/tauri.conf.json
+            ui/package.json
+            ui/CHANGELOG.md
+            ui/src/lib/desktop-changelog.ts
+            scripts/desktop-release.mjs
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
+      # Bản draft chỉ được công bố `--latest` sau khi máy bảo trì chạy
+      # `node scripts/desktop-release.mjs sync "$RELEASE_TAG"` để ký và đính
+      # kèm `latest.json` — tránh cửa sổ 404 cho Tauri updater.
       - name: Create draft and upload missing artifacts
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/desktop-release.mjs notes "$RELEASE_TAG" > release-notes.md
           if ! gh release view "$RELEASE_TAG" --repo "$TARGET_REPO" --json isDraft,assets > release.json; then
             gh release create "$RELEASE_TAG" --repo "$TARGET_REPO" \
-              --draft --target main --title "TramLLM Code $RELEASE_TAG" --generate-notes
+              --draft --target main --title "TramLLM Code $RELEASE_TAG" --notes-file release-notes.md
             gh release view "$RELEASE_TAG" --repo "$TARGET_REPO" --json isDraft,assets > release.json
+          else
+            jq -e '.isDraft' release.json >/dev/null
+            gh release edit "$RELEASE_TAG" --repo "$TARGET_REPO" --notes-file release-notes.md
           fi
           jq -e '.isDraft' release.json >/dev/null
           for file in dist/*; do
@@ -229,17 +253,3 @@ jobs:
               gh release upload "$RELEASE_TAG" "$file" --repo "$TARGET_REPO"
             fi
           done
-
-  publish:
-    name: Publish release
-    needs: [draft]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      TARGET_REPO: HDQuanDev/TramLLM-Code-Build
-    steps:
-      - name: Publish the draft release
-        run: gh release edit "$RELEASE_TAG" --repo "$TARGET_REPO" --draft=false --latest
